@@ -1,0 +1,6 @@
+lib avformat ;
+lib avutil ;
+
+exe feed : feed.c avformat avutil ;
+
+install stage : feed : <location>. ;
