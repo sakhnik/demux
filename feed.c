@@ -6,6 +6,8 @@
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
 
+#include "message.h"
+
 volatile sig_atomic_t exit_flag = 0;
 
 static void DumpInfo(AVFormatContext const *avf_context)
@@ -14,12 +16,18 @@ static void DumpInfo(AVFormatContext const *avf_context)
 
     for (i = 0; i < avf_context->nb_streams; ++i)
     {
-        AVCodecContext const *codec = avf_context->streams[i]->codec;
+        AVCodecContext const *codec;
+        AVCodecDescriptor const *codec_desc;
 
-        printf("%d: %s %s [%s]\n",
-               i, av_get_media_type_string(codec->codec_type),
-               codec->codec_descriptor->name,
-               codec->codec_descriptor->long_name);
+        codec = avf_context->streams[i]->codec;
+        if (!codec)
+            continue;
+        printf("%d: %s", i, av_get_media_type_string(codec->codec_type));
+
+        codec_desc = codec->codec_descriptor;
+        if (codec_desc)
+            printf(" %s [%s]", codec_desc->name, codec_desc->long_name);
+        printf("\n");
     }
 }
 
@@ -44,9 +52,18 @@ static int CreateSocket(char const *port)
 
     for (rp = result; rp != NULL; rp = rp->ai_next)
     {
+        int yes = 1;
+
         sfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
         if (sfd == -1)
             continue;
+
+        if (-1 == setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)))
+        {
+            perror("setsockopt");
+            close(sfd), sfd = -1;
+            continue;
+        }
 
         s = bind(sfd, rp->ai_addr, rp->ai_addrlen);
         if (!s)
@@ -66,7 +83,105 @@ static int CreateSocket(char const *port)
     return sfd;
 }
 
-static int AcceptClient(int sfd, AVFormatContext const *avf_context)
+static int GetRequest(int infd, int *video, int *audio)
+{
+    uint8_t data[sizeof(uint32_t) * 2];
+    int res;
+
+    res = message_recv_raw(sizeof(data), data, infd);
+    if (res != sizeof(data))
+    {
+        if (res)
+            perror("Failed to receive");
+        return -1;
+    }
+    *video = data[0]
+           | (int)data[1] << 8
+           | (int)data[2] << 16
+           | (int)data[3] << 24;
+    *audio = data[4]
+           | (int)data[5] << 8
+           | (int)data[6] << 16
+           | (int)data[7] << 24;
+
+    return 0;
+}
+
+static int Respond(int infd, int video, int audio,
+                   AVFormatContext const *avf_context)
+{
+    if (video >= avf_context->nb_streams ||
+        audio >= avf_context->nb_streams)
+    {
+        char const *error = "No such stream";
+        message_send_raw(strlen(error), (uint8_t const *)error, infd);
+        return -1;
+    }
+
+    if (avf_context->streams[video]->codec->codec_type != AVMEDIA_TYPE_VIDEO)
+    {
+        char const *error = "Not a video stream";
+        message_send_raw(strlen(error), (uint8_t const *)error, infd);
+        return -1;
+    }
+
+    if (avf_context->streams[audio]->codec->codec_type != AVMEDIA_TYPE_AUDIO)
+    {
+        char const *error = "Not an audio stream";
+        message_send_raw(strlen(error), (uint8_t const *)error, infd);
+        return -1;
+    }
+
+    if (-1 == message_send_raw(0, NULL, infd))
+        return -1;
+
+    return 0;
+}
+
+static int ProcessClient(int infd, AVFormatContext *avf_context)
+{
+    AVPacket pkt;
+    int video = 0;
+    int audio = 0;
+
+    if (GetRequest(infd, &video, &audio))
+        return -1;
+
+    if (Respond(infd, video, audio, avf_context))
+        return 0;
+
+    while (!exit_flag && !av_read_frame(avf_context, &pkt))
+    {
+        int res;
+        //uint8_t is_audio = 0;
+
+        //if (pkt.stream_index == video)
+        //    is_audio = 0;
+        //else if (pkt.stream_index == audio)
+        //    is_audio = 1;
+        //else
+        //{
+        //    av_free_packet(&pkt);
+        //    continue;
+        //}
+
+        printf("[%d] frame %d bytes\n", pkt.stream_index, pkt.size);
+        res = message_send_raw(pkt.size, pkt.data, infd);
+        av_free_packet(&pkt);
+
+        if (!res)
+            return 0;
+        if (res == -1)
+        {
+            perror("Failed to receive");
+            return 0;
+        }
+    }
+
+    return 0;
+}
+
+static int AcceptClient(int sfd, AVFormatContext *avf_context)
 {
     struct sockaddr in_addr;
     socklen_t in_len = sizeof(in_addr);
@@ -92,14 +207,17 @@ static int AcceptClient(int sfd, AVFormatContext const *avf_context)
     }
     printf("\n");
 
-    // TODO: Read request
-    // TODO: Send data
+    if (ProcessClient(infd, avf_context))
+    {
+        close(infd);
+        return -1;
+    }
 
     close(infd);
     return 0;
 }
 
-static int RunServer(char const *port, AVFormatContext const *avf_context)
+static int RunServer(char const *port, AVFormatContext *avf_context)
 {
     int sfd;
 
