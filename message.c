@@ -69,7 +69,10 @@ int message_send(struct Message const *message, int sock)
     return message_send_raw(message->size, message->data, sock);
 }
 
-int message_recv_raw(int max_size, uint8_t *data, int sock)
+typedef int (*ReallocFunT)(int *max_size, uint8_t **data, int new_size);
+
+int message_recv_impl(int *max_size, uint8_t **data, int sock,
+                      ReallocFunT realloc_fun)
 {
     uint8_t nsize[4];
     int res, size;
@@ -89,13 +92,21 @@ int message_recv_raw(int max_size, uint8_t *data, int sock)
     if (!size)
         return size;
 
-    if (size > max_size)
+    if (size > *max_size)
     {
-        errno = EFBIG;
-        return -1;
+        if (!realloc_fun)
+        {
+            errno = EFBIG;
+            return -1;
+        }
+        if (realloc_fun(max_size, data, size * 2))
+        {
+            errno = ENOMEM;
+            return -1;
+        }
     }
 
-    res = read(sock, data, size);
+    res = recv(sock, *data, size, MSG_WAITALL);
     if (!res)
         return 0;
     if (res != size)
@@ -104,44 +115,28 @@ int message_recv_raw(int max_size, uint8_t *data, int sock)
     return size;
 }
 
+int message_recv_raw(int max_size, uint8_t *data, int sock)
+{
+    return message_recv_impl(&max_size, &data, sock, NULL);
+}
+
+static int _realloc_buf(int *max_size, uint8_t **data, int new_size)
+{
+    printf("Realloc for %d\n", new_size);
+    *data = realloc(*data, new_size);
+    if (!*data)
+    {
+        *max_size = 0;
+        return -1;
+    }
+    *max_size = new_size;
+    return 0;
+}
+
 int message_recv(struct Message *msg, int sock)
 {
-    uint8_t nsize[4];
-    int res;
-
-    errno = 0;
-    res = recv(sock, &nsize, sizeof(nsize), MSG_WAITALL);
-    if (!res)
-        return 0;
-    if (res != sizeof(nsize))
-        return -1;
-
-    msg->size = nsize[0]
-              | (int)nsize[1] << 8
-              | (int)nsize[2] << 16
-              | (int)nsize[3] << 24;
-
-    if (!msg->size)
-        return msg->size;
-
-    if (msg->size > msg->max_size)
-    {
-        printf("Realloc for %d\n", msg->size);
-        free(msg->data);
-        msg->max_size = msg->size * 2;
-        msg->data = malloc(msg->max_size);
-        if (!msg->data)
-        {
-            errno = ENOMEM;
-            return -1;
-        }
-    }
-
-    res = recv(sock, msg->data, msg->size, MSG_WAITALL);
-    if (!res)
-        return 0;
-    if (res != msg->size)
-        return -1;
-
-    return msg->size;
+    int res = message_recv_impl(&msg->max_size, &msg->data, sock, _realloc_buf);
+    if (res <= 0)
+        return res;
+    return msg->size = res;
 }
