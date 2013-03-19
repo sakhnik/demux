@@ -2,7 +2,21 @@ lib avformat ;
 lib avutil ;
 lib avcodec ;
 
-exe feed : feed.c message.c avformat avcodec avutil ;
-exe sink : sink.c message.c ;
+lib common
+    : [ glob *.c : feed.c sink.c ]
+    : <link>static
+    ;
 
-install stage : feed sink : <location>. ;
+exe feed
+    : feed.c
+      common avformat avcodec avutil
+    ;
+exe sink
+    : sink.c
+      common
+    ;
+
+install stage
+    : feed sink
+    : <location>.
+    ;

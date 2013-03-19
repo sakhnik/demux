@@ -31,9 +31,12 @@ void message_free(struct Message *message)
     free(message);
 }
 
-int message_send_raw(int size, uint8_t const *data, int sock)
+int message_send_raw2(int sock,
+                      uint8_t const *data0, int size0,
+                      uint8_t const *data1, int size1)
 {
     int i, res, total_size = 0;
+    int size = size0 + size1;
     uint8_t nsize[] =
     {
         size & 0xFF,
@@ -45,7 +48,8 @@ int message_send_raw(int size, uint8_t const *data, int sock)
     struct iovec iov[] =
     {
         { .iov_base = nsize,            .iov_len = sizeof(nsize) },
-        { .iov_base = (void *)data,     .iov_len = size          }
+        { .iov_base = (void *)data0,    .iov_len = size0         },
+        { .iov_base = (void *)data1,    .iov_len = size1         },
     };
 
     struct msghdr mh = { 0 };
@@ -64,14 +68,19 @@ int message_send_raw(int size, uint8_t const *data, int sock)
     return size;
 }
 
-int message_send(struct Message const *message, int sock)
+int message_send_raw(int sock, uint8_t const *data, int size)
 {
-    return message_send_raw(message->size, message->data, sock);
+    return message_send_raw2(sock, data, size, NULL, 0);
+}
+
+int message_send(int sock, struct Message const *message)
+{
+    return message_send_raw(sock, message->data, message->size);
 }
 
 typedef int (*ReallocFunT)(int *max_size, uint8_t **data, int new_size);
 
-int message_recv_impl(int *max_size, uint8_t **data, int sock,
+int message_recv_impl(int sock, uint8_t **data, int *max_size,
                       ReallocFunT realloc_fun)
 {
     uint8_t nsize[4];
@@ -115,14 +124,13 @@ int message_recv_impl(int *max_size, uint8_t **data, int sock,
     return size;
 }
 
-int message_recv_raw(int max_size, uint8_t *data, int sock)
+int message_recv_raw(int sock, uint8_t *data, int max_size)
 {
-    return message_recv_impl(&max_size, &data, sock, NULL);
+    return message_recv_impl(sock, &data, &max_size, NULL);
 }
 
 static int _realloc_buf(int *max_size, uint8_t **data, int new_size)
 {
-    printf("Realloc for %d\n", new_size);
     *data = realloc(*data, new_size);
     if (!*data)
     {
@@ -133,9 +141,9 @@ static int _realloc_buf(int *max_size, uint8_t **data, int new_size)
     return 0;
 }
 
-int message_recv(struct Message *msg, int sock)
+int message_recv(int sock, struct Message *msg)
 {
-    int res = message_recv_impl(&msg->max_size, &msg->data, sock, _realloc_buf);
+    int res = message_recv_impl(sock, &msg->data, &msg->max_size, _realloc_buf);
     if (res <= 0)
         return res;
     return msg->size = res;

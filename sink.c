@@ -4,6 +4,8 @@
 #include <string.h>
 
 #include "message.h"
+#include "protocol.h"
+
 
 static int Connect(char const *host, char const *port)
 {
@@ -40,49 +42,9 @@ static int Connect(char const *host, char const *port)
     return sock;
 }
 
-static int SendRequest(int video, int audio, int sock)
-{
-    uint8_t data[] =
-    {
-        video & 0xFF,
-        (video >> 8) & 0xFF,
-        (video >> 16) & 0xFF,
-        (video >> 24) & 0xFF,
-
-        audio & 0xFF,
-        (audio >> 8) & 0xFF,
-        (audio >> 16) & 0xFF,
-        (audio >> 24) & 0xFF
-    };
-
-    if (message_send_raw(sizeof(data), data, sock) > 0)
-        return 0;
-    return -1;
-}
-
-static int ReceiveResponse(int sock)
-{
-    uint8_t data[1024];
-    int res;
-
-    res = message_recv_raw(sizeof(data) - 1, data, sock);
-    if (-1 == res)
-    {
-        perror("Failed to receive response");
-        return -1;
-    }
-    if (!res)
-        return 0;
-    data[res] = 0;
-    fprintf(stderr, "Error: %s\n", data);
-    return -1;
-}
-
 static int ReceivePackets(int sock)
 {
-    struct Message *msg = NULL;
-
-    msg = message_alloc(1024);
+    struct Message *msg = message_alloc(1024);
     if (!msg)
     {
         fprintf(stderr, "Failed to alloc message\n");
@@ -91,7 +53,7 @@ static int ReceivePackets(int sock)
 
     while (1)
     {
-        int size = message_recv(msg, sock);
+        int size = protocol_packet_recv(sock, msg);
         if (-1 == size)
         {
             perror("Failed to receive");
@@ -101,7 +63,8 @@ static int ReceivePackets(int sock)
         if (!size)
             break;
 
-        //printf("%d\n", msg->size);
+        printf("[%d] %d bytes\n", protocol_packet_get_type(msg),
+                                  protocol_packet_get_size(msg));
     }
 
     message_free(msg);
@@ -116,6 +79,7 @@ int main(int argc, char *argv[])
     int audio = 1;
 
     int sock;
+    char buffer[1024];
 
     sock = Connect(host, port);
     if (-1 == sock)
@@ -124,14 +88,20 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    if (-1 == SendRequest(video, audio, sock))
+    if (-1 == protocol_init_send(sock, video, audio))
     {
         close(sock), sock = -1;
         return 1;
     }
 
-    if (-1 == ReceiveResponse(sock))
+    if (-1 == protocol_resp_recv(sock, buffer, sizeof(buffer)))
     {
+        close(sock), sock = -1;
+        return 1;
+    }
+    if (buffer[0])
+    {
+        fprintf(stderr, "Error: %s\n", buffer);
         close(sock), sock = -1;
         return 1;
     }
