@@ -2,17 +2,55 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <memory.h>
+#include <sys/socket.h>
+#include <fcntl.h>
 
 #include "writer.h"
 #include "protocol.h"
 #include "message.h"
+
+enum
+{
+    _READER = 0,
+    _WRITER
+};
+
+static int do_write(int fd, uint8_t const *data, size_t size)
+{
+    while (size)
+    {
+        int res = write(fd, data, size);
+        if (res <= 0)
+            return -1;
+        size -= res;
+        data += res;
+    }
+    return 0;
+}
 
 static void *writer_task(void *arg)
 {
     Writer *writer = (Writer *)arg;
     while (!writer->exit_flag)
     {
-        usleep(10000);
+        struct Message *message = NULL;
+        int res = recv(writer->queue[_READER], &message, sizeof(message), 0);
+        if (-1 == res)
+        {
+            perror("recv");
+            continue;
+        }
+        if (!res)
+            break;
+
+        if (-1 == do_write(writer->outfd,
+                           protocol_packet_get_data(message),
+                           protocol_packet_get_size(message)))
+        {
+            perror("write");
+            pthread_exit((void *)-1);
+        }
+        message_free(message);
     }
     pthread_exit(NULL);
 }
@@ -30,10 +68,19 @@ Writer *writer_init(char const *fname)
 
     memset(writer, 0, sizeof(Writer));
 
-    writer->file = fopen(fname, "wb");
-    if (!writer->file)
+    if (socketpair(PF_LOCAL, SOCK_DGRAM, 0, writer->queue))
+    {
+        perror("socketpair");
+        free(writer);
+        return NULL;
+    }
+
+    writer->outfd = open(fname, O_WRONLY|O_CREAT|O_TRUNC);
+    if (-1 == writer->outfd)
     {
         fprintf(stderr, "Can't open file for writing\n");
+        close(writer->queue[_READER]);
+        close(writer->queue[_WRITER]);
         free(writer);
         return NULL;
     }
@@ -42,7 +89,9 @@ Writer *writer_init(char const *fname)
     if (res)
     {
         perror("pthread_create");
-        fclose(writer->file);
+        close(writer->queue[_READER]);
+        close(writer->queue[_WRITER]);
+        close(writer->outfd);
         free(writer);
         return NULL;
     }
@@ -61,7 +110,9 @@ static void writer_close_impl(Writer *writer, int give_up)
     }
     pthread_join(writer->thread, &res);
 
-    fclose(writer->file);
+    close(writer->queue[_READER]);
+    close(writer->queue[_WRITER]);
+    close(writer->outfd);
     free(writer);
 }
 
@@ -77,7 +128,12 @@ void writer_wait_close(Writer *writer)
 
 int writer_post(Writer *writer, struct Message *message)
 {
-    printf("%d\n", protocol_packet_get_size(message));
-    message_free(message);
+    int res = send(writer->queue[_WRITER], &message, sizeof(message), 0);
+    if (-1 == res)
+    {
+        perror("send");
+        message_free(message);
+        return -1;
+    }
     return 0;
 }
