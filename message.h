@@ -5,7 +5,6 @@
 struct Message
 {
     int size;
-    int max_size;
     uint8_t *data;
 };
 

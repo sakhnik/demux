@@ -1,17 +1,15 @@
 #include <unistd.h>
 #include <signal.h>
-#include <netdb.h>
 #include <stdio.h>
-#include <assert.h>
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
 
-#include "message.h"
 #include "protocol.h"
+#include "tcp.h"
 
 volatile sig_atomic_t exit_flag = 0;
 
-static void DumpInfo(AVFormatContext const *avf_context)
+static void dump_info(AVFormatContext const *avf_context)
 {
     int i;
 
@@ -30,58 +28,6 @@ static void DumpInfo(AVFormatContext const *avf_context)
             printf(" %s [%s]", codec_desc->name, codec_desc->long_name);
         printf("\n");
     }
-}
-
-static int CreateSocket(char const *port)
-{
-    //https://banu.com/blog/2/how-to-use-epoll-a-complete-example-in-c/
-    struct addrinfo hints;
-    struct addrinfo *result, *rp;
-    int s, sfd;
-
-    memset(&hints, 0, sizeof(struct addrinfo));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE;
-
-    s = getaddrinfo(NULL, port, &hints, &result);
-    if (s)
-    {
-        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(s));
-        return -1;
-    }
-
-    for (rp = result; rp != NULL; rp = rp->ai_next)
-    {
-        int yes = 1;
-
-        sfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-        if (sfd == -1)
-            continue;
-
-        if (-1 == setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)))
-        {
-            perror("setsockopt");
-            close(sfd), sfd = -1;
-            continue;
-        }
-
-        s = bind(sfd, rp->ai_addr, rp->ai_addrlen);
-        if (!s)
-            break; /* Bound successfully */
-
-        close(sfd), sfd = -1;
-    }
-
-    if (!rp)
-    {
-        assert(sfd == -1);
-        fprintf(stderr, "Couldn't bind\n");
-        return -1;
-    }
-
-    freeaddrinfo(result);
-    return sfd;
 }
 
 static int Respond(int infd, int video, int audio,
@@ -115,7 +61,7 @@ static int Respond(int infd, int video, int audio,
     return 0;
 }
 
-static int ProcessClient(int infd, AVFormatContext *avf_context)
+static int process_client(int infd, AVFormatContext *avf_context)
 {
     AVPacket pkt;
     int video = 0;
@@ -126,6 +72,9 @@ static int ProcessClient(int infd, AVFormatContext *avf_context)
 
     if (Respond(infd, video, audio, avf_context))
         return 0;
+
+    if (av_seek_frame(avf_context, -1, 0, 0) < 0)
+        return -1;
 
     while (!exit_flag && !av_read_frame(avf_context, &pkt))
     {
@@ -157,68 +106,35 @@ static int ProcessClient(int infd, AVFormatContext *avf_context)
     return 0;
 }
 
-static int AcceptClient(int sfd, AVFormatContext *avf_context)
+static int run_server(char const *port, AVFormatContext *avf_context)
 {
-    struct sockaddr in_addr;
-    socklen_t in_len = sizeof(in_addr);
-    int infd;
-    char hbuf[NI_MAXHOST], sbuf[NI_MAXSERV];
-
-    infd = accept(sfd, &in_addr, &in_len);
-    if (-1 == infd)
-    {
-        if (errno == EINTR)
-            return 0;
-        perror("accept");
-        return -1;
-    }
-
-    printf("Accepted connection %d", infd);
-    if (!getnameinfo(&in_addr, in_len,
-                     hbuf, sizeof(hbuf),
-                     sbuf, sizeof(sbuf),
-                     NI_NUMERICHOST | NI_NUMERICSERV))
-    {
-        printf(" (host=%s, port=%s)", hbuf, sbuf);
-    }
-    printf("\n");
-
-    if (ProcessClient(infd, avf_context))
-    {
-        close(infd);
-        return -1;
-    }
-
-    close(infd);
-    return 0;
-}
-
-static int RunServer(char const *port, AVFormatContext *avf_context)
-{
-    int sfd;
-
-    sfd = CreateSocket(port);
+    int sfd = tcp_listen(port);
     if (-1 == sfd)
         return -1;
 
-    if (-1 == listen(sfd, SOMAXCONN))
+    while (!exit_flag)
     {
-        perror("listen");
-        close(sfd);
-        return -1;
-    }
-
-    //while (!exit_flag)
-    //{
-        if (AcceptClient(sfd, avf_context))
+        int infd = tcp_accept(sfd);
+        if (!infd)
+            break;
+        if (infd < 0)
         {
             close(sfd);
             return -1;
         }
-    //}
+
+        if (process_client(infd, avf_context))
+        {
+            close(infd);
+            close(sfd);
+            return -1;
+        }
+
+        tcp_close(infd);
+    }
 
     printf("Exiting\n");
-    close(sfd);
+    tcp_close(sfd);
     return 0;
 }
 
@@ -227,7 +143,7 @@ static void SetExitFlag(int signum)
     exit_flag = 1;
 }
 
-static void InitSignal(void)
+static void init_signal(void)
 {
     struct sigaction act;
 
@@ -253,7 +169,7 @@ int main(int argc, char *argv[])
 
     if (avformat_open_input(&avf_context, argv[1], NULL, NULL) < 0)
     {
-        fprintf(stderr, "Couldn't open stream\n");
+        fprintf(stderr, "Couldn't open file\n");
         return 1;
     }
 
@@ -264,11 +180,11 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    DumpInfo(avf_context);
+    dump_info(avf_context);
 
-    InitSignal();
+    init_signal();
 
-    if (RunServer("12345", avf_context) < 0)
+    if (run_server("12345", avf_context) < 0)
     {
         avformat_close_input(&avf_context);
         return 1;
