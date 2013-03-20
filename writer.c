@@ -68,14 +68,14 @@ Writer *writer_init(char const *fname)
 
     memset(writer, 0, sizeof(Writer));
 
-    if (socketpair(PF_LOCAL, SOCK_DGRAM, 0, writer->queue))
+    if (socketpair(PF_LOCAL, SOCK_SEQPACKET, 0, writer->queue))
     {
         perror("socketpair");
         free(writer);
         return NULL;
     }
 
-    writer->outfd = open(fname, O_WRONLY|O_CREAT|O_TRUNC);
+    writer->outfd = open(fname, O_WRONLY|O_CREAT|O_TRUNC, 0640);
     if (-1 == writer->outfd)
     {
         fprintf(stderr, "Can't open file for writing\n");
@@ -108,10 +108,10 @@ static void writer_close_impl(Writer *writer, int give_up)
         writer->exit_flag = 1;
         __sync_synchronize();
     }
+    close(writer->queue[_WRITER]);
     pthread_join(writer->thread, &res);
 
     close(writer->queue[_READER]);
-    close(writer->queue[_WRITER]);
     close(writer->outfd);
     free(writer);
 }
