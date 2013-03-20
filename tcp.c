@@ -144,3 +144,94 @@ int tcp_connect(char const *host, char const *port)
     freeaddrinfo(result);
     return sock;
 }
+
+int tcp_send(int sock, uint8_t const *data, int size)
+{
+    return tcp_send2(sock, data, size, NULL, 0);
+}
+
+int tcp_send2(int sock,
+              uint8_t const *data0, int size0,
+              uint8_t const *data1, int size1)
+{
+    int i, res, total_size = 0;
+    int size = size0 + size1;
+    uint8_t nsize[] =
+    {
+        size & 0xFF,
+        (size >> 8) & 0xFF,
+        (size >> 16) & 0xFF,
+        (size >> 24) & 0xFF
+    };
+
+    struct iovec iov[] =
+    {
+        { .iov_base = nsize,            .iov_len = sizeof(nsize) },
+        { .iov_base = (void *)data0,    .iov_len = size0         },
+        { .iov_base = (void *)data1,    .iov_len = size1         },
+    };
+
+    struct msghdr mh = { 0 };
+    mh.msg_iov = iov;
+    mh.msg_iovlen = sizeof(iov) / sizeof(iov[0]);
+
+    for (i = 0; i != mh.msg_iovlen; ++i)
+        total_size += mh.msg_iov[i].iov_len;
+
+    res = sendmsg(sock, &mh, 0);
+    if (!res)
+        return 0;
+    if (total_size != res)
+        return -1;
+
+    return size;
+}
+
+int tcp_recv(int sock, uint8_t *data, int max_size)
+{
+    return tcp_recv_realloc(sock, &data, &max_size, NULL);
+}
+
+int tcp_recv_realloc(int sock, uint8_t **data, int *max_size,
+                     ReallocFunT realloc_fun)
+{
+    uint8_t nsize[4];
+    int res, size;
+
+    errno = 0;
+    res = recv(sock, &nsize, sizeof(nsize), MSG_WAITALL);
+    if (!res)
+        return 0;
+    if (res != sizeof(nsize))
+        return -1;
+
+    size = nsize[0]
+         | (int)nsize[1] << 8
+         | (int)nsize[2] << 16
+         | (int)nsize[3] << 24;
+
+    if (!size)
+        return size;
+
+    if (size > *max_size)
+    {
+        if (!realloc_fun)
+        {
+            errno = EFBIG;
+            return -1;
+        }
+        if (realloc_fun(max_size, data, size * 2))
+        {
+            errno = ENOMEM;
+            return -1;
+        }
+    }
+
+    res = recv(sock, *data, size, MSG_WAITALL);
+    if (!res)
+        return 0;
+    if (res != size)
+        return -1;
+
+    return size;
+}

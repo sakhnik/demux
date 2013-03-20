@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 
 #include "message.h"
+#include "tcp.h"
 
 struct Message *message_alloc(int size)
 {
@@ -27,109 +28,17 @@ struct Message *message_alloc(int size)
 
 void message_free(struct Message *message)
 {
-    if (!message)
-        return;
-    if (message->data)
-        free(message->data);
-    free(message);
-}
-
-int message_send_raw2(int sock,
-                      uint8_t const *data0, int size0,
-                      uint8_t const *data1, int size1)
-{
-    int i, res, total_size = 0;
-    int size = size0 + size1;
-    uint8_t nsize[] =
+    if (message)
     {
-        size & 0xFF,
-        (size >> 8) & 0xFF,
-        (size >> 16) & 0xFF,
-        (size >> 24) & 0xFF
-    };
-
-    struct iovec iov[] =
-    {
-        { .iov_base = nsize,            .iov_len = sizeof(nsize) },
-        { .iov_base = (void *)data0,    .iov_len = size0         },
-        { .iov_base = (void *)data1,    .iov_len = size1         },
-    };
-
-    struct msghdr mh = { 0 };
-    mh.msg_iov = iov;
-    mh.msg_iovlen = sizeof(iov) / sizeof(iov[0]);
-
-    for (i = 0; i != mh.msg_iovlen; ++i)
-        total_size += mh.msg_iov[i].iov_len;
-
-    res = sendmsg(sock, &mh, 0);
-    if (!res)
-        return 0;
-    if (total_size != res)
-        return -1;
-
-    return size;
-}
-
-int message_send_raw(int sock, uint8_t const *data, int size)
-{
-    return message_send_raw2(sock, data, size, NULL, 0);
-}
-
-int message_send(int sock, struct Message const *message)
-{
-    return message_send_raw(sock, message->data, message->size);
-}
-
-typedef int (*ReallocFunT)(int *size, uint8_t **data, int new_size);
-
-int message_recv_impl(int sock, uint8_t **data, int *max_size,
-                      ReallocFunT realloc_fun)
-{
-    uint8_t nsize[4];
-    int res, size;
-
-    errno = 0;
-    res = recv(sock, &nsize, sizeof(nsize), MSG_WAITALL);
-    if (!res)
-        return 0;
-    if (res != sizeof(nsize))
-        return -1;
-
-    size = nsize[0]
-         | (int)nsize[1] << 8
-         | (int)nsize[2] << 16
-         | (int)nsize[3] << 24;
-
-    if (!size)
-        return size;
-
-    if (size > *max_size)
-    {
-        if (!realloc_fun)
-        {
-            errno = EFBIG;
-            return -1;
-        }
-        if (realloc_fun(max_size, data, size * 2))
-        {
-            errno = ENOMEM;
-            return -1;
-        }
+        if (message->data)
+            free(message->data);
+        free(message);
     }
-
-    res = recv(sock, *data, size, MSG_WAITALL);
-    if (!res)
-        return 0;
-    if (res != size)
-        return -1;
-
-    return size;
 }
 
-int message_recv_raw(int sock, uint8_t *data, int max_size)
+int message_send(struct Message const *message, int sock)
 {
-    return message_recv_impl(sock, &data, &max_size, NULL);
+    return tcp_send(sock, message->data, message->size);
 }
 
 static int _realloc_buf(int *size, uint8_t **data, int new_size)
@@ -144,9 +53,9 @@ static int _realloc_buf(int *size, uint8_t **data, int new_size)
     return 0;
 }
 
-int message_recv(int sock, struct Message *msg)
+int message_recv(struct Message *msg, int sock)
 {
-    int res = message_recv_impl(sock, &msg->data, &msg->size, _realloc_buf);
+    int res = tcp_recv_realloc(sock, &msg->data, &msg->size, _realloc_buf);
     if (res <= 0)
         return res;
     return msg->size = res;
