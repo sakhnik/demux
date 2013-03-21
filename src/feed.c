@@ -113,7 +113,7 @@ static int run_server(char const *port, AVFormatContext *avf_context)
     if (-1 == sfd)
         return -1;
 
-    while (!exit_flag)
+    do
     {
         int infd = tcp_accept(sfd);
         if (!infd)
@@ -133,6 +133,8 @@ static int run_server(char const *port, AVFormatContext *avf_context)
 
         tcp_close(infd);
     }
+    //while (!exit_flag);
+    while (0);
 
     printf("Exiting\n");
     tcp_close(sfd);
