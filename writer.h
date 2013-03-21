@@ -6,7 +6,6 @@
 typedef struct _Writer
 {
     pthread_t thread;
-    volatile int exit_flag;
     int outfd;
     int queue[2]; // socket pair
 } Writer;

@@ -31,7 +31,7 @@ static int do_write(int fd, uint8_t const *data, size_t size)
 static void *writer_task(void *arg)
 {
     Writer *writer = (Writer *)arg;
-    while (!writer->exit_flag)
+    while (1)
     {
         struct Message *message = NULL;
         int res = recv(writer->queue[_READER], &message, sizeof(message), 0);
@@ -103,11 +103,6 @@ static void writer_close_impl(Writer *writer, int give_up)
 {
     void *res;
 
-    if (give_up)
-    {
-        writer->exit_flag = 1;
-        __sync_synchronize();
-    }
     close(writer->queue[_WRITER]);
     pthread_join(writer->thread, &res);
 

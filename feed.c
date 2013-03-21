@@ -119,14 +119,14 @@ static int run_server(char const *port, AVFormatContext *avf_context)
             break;
         if (infd < 0)
         {
-            close(sfd);
+            tcp_close(sfd);
             return -1;
         }
 
         if (process_client(infd, avf_context))
         {
-            close(infd);
-            close(sfd);
+            tcp_close(infd);
+            tcp_close(sfd);
             return -1;
         }
 
