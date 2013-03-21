@@ -1,6 +1,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <stdio.h>
+#include <getopt.h>
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
 
@@ -30,7 +31,7 @@ static void dump_info(AVFormatContext const *avf_context)
     }
 }
 
-static int Respond(int infd, int video, int audio,
+static int respond(int infd, int video, int audio,
                    AVFormatContext const *avf_context)
 {
     if (video >= avf_context->nb_streams ||
@@ -70,7 +71,7 @@ static int process_client(int infd, AVFormatContext *avf_context)
     if (protocol_init_recv(infd, &video, &audio))
         return -1;
 
-    if (Respond(infd, video, audio, avf_context))
+    if (respond(infd, video, audio, avf_context))
         return 0;
 
     if (av_seek_frame(avf_context, -1, 0, 0) < 0)
@@ -153,21 +154,62 @@ static void init_signal(void)
     sigaction(SIGTERM, &act, NULL);
 }
 
+static void usage(void)
+{
+    printf("Usage:\n"
+           "  feed [options] <file.mkv>\n"
+           "Options:\n"
+           "  -p,--port 12345\tTCP port to listen\n"
+           "  -h,--help\t\tPrint this help\n");
+}
+
 int main(int argc, char *argv[])
 {
+    char const *port = "12345";
+    char const *mkv_file = NULL;
+
+    int c;
     AVFormatContext *avf_context = NULL;
 
-    if (argc != 2)
+    while (1)
     {
-        char const *slash = strrchr(argv[0], '/');
-        char const *progname = slash ? ++slash : argv[0];
-        fprintf(stderr, "Usage: %s <file.mkv>\n", progname);
+        static struct option long_options[] =
+        {
+            { "help", no_argument      , 0, 'h' },
+            { "port", required_argument, 0, 'p' },
+            { 0, 0, 0, 0 }
+        };
+        int option_index = 0;
+
+        c = getopt_long(argc, argv, "hp:",
+                        long_options, &option_index);
+        if (c == -1)
+            break;
+        switch (c)
+        {
+        case 'p':
+            port = optarg;
+            break;
+        case '?':
+        case 'h':
+            usage();
+            return 0;
+        default:
+            usage();
+            return 1;
+        }
+    }
+
+    if (optind + 1 != argc)
+    {
+        usage();
         return 1;
     }
+    mkv_file = argv[optind];
 
     av_register_all();
 
-    if (avformat_open_input(&avf_context, argv[1], NULL, NULL) < 0)
+    if (avformat_open_input(&avf_context, mkv_file, NULL, NULL) < 0)
     {
         fprintf(stderr, "Couldn't open file\n");
         return 1;
@@ -184,7 +226,7 @@ int main(int argc, char *argv[])
 
     init_signal();
 
-    if (run_server("12345", avf_context) < 0)
+    if (run_server(port, avf_context) < 0)
     {
         avformat_close_input(&avf_context);
         return 1;

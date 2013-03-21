@@ -51,7 +51,7 @@ static int create_sock_and_bind(char const *port)
     if (!rp)
     {
         assert(sfd == -1);
-        fprintf(stderr, "Couldn't bind\n");
+        perror("bind");
         return -1;
     }
 
