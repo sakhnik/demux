@@ -9,7 +9,7 @@
 
 static int create_sock_and_bind(char const *port)
 {
-    //https://banu.com/blog/2/how-to-use-epoll-a-complete-example-in-c/
+    /* https://banu.com/blog/2/how-to-use-epoll-a-complete-example-in-c/ */
     struct addrinfo hints;
     struct addrinfo *result, *rp;
     int s, sfd;
@@ -158,7 +158,7 @@ int tcp_send2(int sock,
     int size = size0 + size1;
     uint8_t nsize[] =
     {
-        size & 0xFF,
+        size & 0xFF,          /* htonl could have been used too */
         (size >> 8) & 0xFF,
         (size >> 16) & 0xFF,
         (size >> 24) & 0xFF

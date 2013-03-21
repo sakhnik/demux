@@ -152,6 +152,9 @@ static void init_signal(void)
     act.sa_handler = SetExitFlag;
     sigaction(SIGINT, &act, NULL);
     sigaction(SIGTERM, &act, NULL);
+
+    act.sa_handler = SIG_IGN;
+    sigaction(SIGHUP, &act, NULL);
 }
 
 static void usage(void)

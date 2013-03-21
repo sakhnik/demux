@@ -18,3 +18,12 @@ size of the packet. The protocol is as follows:
 The sink runs three threads: one receives data from the feed and dispatches
 the received packets, the two others write the data to the files.
 Connected socketpair is used to queue received data for writing.
+
+Design decisions:
+  * Synchronous one-client server for the `feed'
+  * TCP for communication (thus, the feed and sink can run on different
+    stations)
+  * Socket pair as the synchronization queue
+
+Anatolii Sakhnik,
+Kyiv, 2013

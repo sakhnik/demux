@@ -11,8 +11,8 @@
 
 enum
 {
-    _READER = 0,
-    _WRITER
+    _READER = 0,        /* socketpair reader end */
+    _WRITER             /* ...        writer end */
 };
 
 static int do_write(int fd, uint8_t const *data, size_t size)
@@ -99,7 +99,7 @@ Writer *writer_init(char const *fname)
     return writer;
 }
 
-static void writer_close_impl(Writer *writer, int give_up)
+void writer_close(Writer *writer)
 {
     void *res;
 
@@ -109,16 +109,6 @@ static void writer_close_impl(Writer *writer, int give_up)
     close(writer->queue[_READER]);
     close(writer->outfd);
     free(writer);
-}
-
-void writer_close(Writer *writer)
-{
-    writer_close_impl(writer, 1);
-}
-
-void writer_wait_close(Writer *writer)
-{
-    writer_close_impl(writer, 0);
 }
 
 int writer_post(Writer *writer, struct Message *message)

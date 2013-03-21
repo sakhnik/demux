@@ -86,9 +86,8 @@ static int receive_packets(int sock)
         return -1;
     }
 
-    writer_wait_close(audio_writer);
-    writer_wait_close(video_writer);
-
+    writer_close(audio_writer);
+    writer_close(video_writer);
     return 0;
 }
 
