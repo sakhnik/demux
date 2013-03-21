@@ -1,0 +1,20 @@
+Demux MKV files:
+ - `feed' reads a file, prints out the list of streams contained in the file.
+ - `sink' connects to the `feed', obtains selected audio and video track,
+   and writes elementary streams to the files video.out and audio.out.
+
+TCP is used for communication between sink and feed. To preserve message
+boundaries, each packet is prepended with four-byte (little-endian)
+size of the packet. The protocol is as follows:
+
+  sink                                                feed
+       video_idx (4 bytes), audio_idx (4 bytes) ----->
+       <------- "error message, if not found" <-------
+
+       <------- type (1 byte), data (n bytes) <-------
+       <------- type (1 byte), data (n bytes) <-------
+       ...
+
+The sink runs three threads: one receives data from the feed and dispatches
+the received packets, the two others write the data to the files.
+Connected socketpair is used to queue received data for writing.

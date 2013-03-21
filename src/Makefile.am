@@ -6,6 +6,7 @@ libcommon_a_SOURCES = tcp.h tcp.c protocol.h protocol.c \
 		      message.h message.c
 
 feed_SOURCES = feed.c
+feed_CFLAGS = $(LIBAVFORMAT_CFLAGS) $(LIBAVCODEC_CFLAGS) $(LIBAVUTIL_CFLAGS)
 feed_LDADD = libcommon.a \
 	     $(LIBAVFORMAT_LIBS) $(LIBAVCODEC_LIBS) $(LIBAVUTIL_LIBS)
 
