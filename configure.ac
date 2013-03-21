@@ -2,7 +2,7 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ([2.69])
-AC_INIT([demux], [0.0.1], [sakhnik@gmail.com])
+AC_INIT([demux], [1.0.0], [sakhnik@gmail.com])
 AM_INIT_AUTOMAKE([1.9])
 
 # Checks for programs.
